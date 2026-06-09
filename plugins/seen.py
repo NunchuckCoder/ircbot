@@ -1,51 +1,81 @@
-# ================================================================================ #
-#                                                                                  #
-# Ficheiro:      seen.py                                                           #
-# Autor:         NunchuckCoder                                                     #
-# Versão:        1.0                                                               #
-# Data:          Julho 2025                                                        #
-# Descrição:     Módulo responsável por registar e consultar a última vez que      #
-#                um utilizador foi visto no IRC. Usa uma base de dados SQLite      #
-#                simples para armazenamento persistente.                           #
-# Licença:       MIT License                                                       #
-#                                                                                  #
-# ================================================================================ #
-
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Osvaldo Cipriano (github.com/nunchuckcoder)
+"""
+Persistência da última vez que cada utilizador foi visto.
+"""
+import asyncio
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
+from threading import Lock
 
-# Caminho para a base de dados SQLite
-DB_PATH = "db/seen.db"
+# Caminho absoluto: <projecto>/db/seen.db
+DB_PATH = os.path.normpath(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "db",
+        "seen.db",
+    )
+)
 
-def init_db():
-    # Inicializa a base de dados, criando a tabela 'seen' se não existir.
+_lock = Lock()
+
+
+def init_db() -> None:
+    """Cria a tabela 'seen' se ainda não existir."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
-        c = conn.cursor()
-        c.execute("CREATE TABLE IF NOT EXISTS seen (nick TEXT PRIMARY KEY, last_seen TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS seen ("
+            "    nick TEXT PRIMARY KEY,"
+            "    last_seen TEXT NOT NULL"
+            ")"
+        )
         conn.commit()
 
-def log_seen(nick):
-    # Regista a última vez que o utilizador foi visto.
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT OR REPLACE INTO seen (nick, last_seen) VALUES (?, ?)", (nick, now))
-        conn.commit()
-    finally:
-        conn.close()
 
-def get_seen(nick):
-    # Obtém a última vez que o utilizador foi visto.
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        c = conn.cursor()
-        c.execute("SELECT last_seen FROM seen WHERE nick=?", (nick,))
-        row = c.fetchone()
-        if row:
-            return f"{nick} foi visto pela última vez em {row[0]}"
-        return f"{nick} nunca foi visto."
-    finally:
-        conn.close()
+def log_seen(nick: str) -> None:
+    """Versão síncrona — usar log_seen_async a partir do event loop."""
+    if not nick:
+        return
+    nick_l = nick.lower()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _lock:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO seen (nick, last_seen) VALUES (?, ?)",
+                (nick_l, now),
+            )
+            conn.commit()
+
+
+def get_seen(nick: str) -> str:
+    """Versão síncrona — usar get_seen_async a partir do event loop."""
+    if not nick:
+        return "ℹ️ Nick inválido."
+    nick_l = nick.lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT last_seen FROM seen WHERE nick = ?",
+            (nick_l,),
+        ).fetchone()
+    if row:
+        return f"{nick} foi visto pela última vez em {row[0]} (UTC)"
+    return f"{nick} nunca foi visto."
+
+
+# ─────────────── Wrappers async (correm em thread executor) ───────────────
+
+async def log_seen_async(nick: str) -> None:
+    """Não bloqueia o event loop."""
+    if not nick:
+        return
+    await asyncio.to_thread(log_seen, nick)
+
+
+async def get_seen_async(nick: str) -> str:
+    """Não bloqueia o event loop."""
+    if not nick:
+        return "ℹ️ Nick inválido."
+    return await asyncio.to_thread(get_seen, nick)
