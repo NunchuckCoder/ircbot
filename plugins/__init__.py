@@ -1,1 +1,3 @@
-# Este arquivo pode ficar vazio, apenas torna a pasta um pacote Python.
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Osvaldo Cipriano (github.com/nunchuckcoder)
+"""Pacote de plugins do bot IRC."""
